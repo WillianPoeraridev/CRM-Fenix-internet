@@ -20,7 +20,6 @@ type CrmRecord = {
 type City = {
   id: string;
   name: string;
-  region_id: string;
 };
 
 const tipoOptions = [
@@ -60,6 +59,7 @@ export default function CrmPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [form, setForm] = useState(initialForm);
@@ -70,7 +70,8 @@ export default function CrmPage() {
 
   const loadRecords = async () => {
     const { data, error: recordsError } = await supabase
-      .from("app.crm_records")
+      .schema("app")
+      .from("crm_records")
       .select(
         "id, data_registro, tipo, status, qnt, bairro, city_id, seller_id, created_at"
       )
@@ -86,8 +87,10 @@ export default function CrmPage() {
 
   const loadCities = async () => {
     const { data, error: citiesError } = await supabase
-      .from("config.cities")
-      .select("id, name, region_id")
+      .schema("config")
+      .from("cities")
+      .select("id, name")
+      .eq("is_active", true)
       .order("name", { ascending: true });
 
     if (citiesError) {
@@ -104,6 +107,7 @@ export default function CrmPage() {
       try {
         setLoading(true);
         setError(null);
+        setErrorDetails(null);
 
         const { data: userData, error: userError } =
           await supabase.auth.getUser();
@@ -118,11 +122,14 @@ export default function CrmPage() {
 
         await Promise.all([loadCities(), loadRecords()]);
       } catch (err) {
-        console.error(err);
+        console.error("[CRM load]", err);
         if (isMounted) {
           setError(
             "Nao foi possivel carregar os registros agora. Tente novamente."
           );
+          if (err instanceof Error) {
+            setErrorDetails(err.message);
+          }
         }
       } finally {
         if (isMounted) {
@@ -141,6 +148,7 @@ export default function CrmPage() {
   const handleSave = async () => {
     try {
       setError(null);
+      setErrorDetails(null);
 
       if (!userId) {
         setError("Sessao invalida. Faca login novamente.");
@@ -172,29 +180,25 @@ export default function CrmPage() {
         seller_id: userId,
       };
 
-      const { data, error: insertError } = await supabase
-        .from("app.crm_records")
+      const { error: insertError } = await supabase
+        .schema("app")
+        .from("crm_records")
         .insert(payload)
-        .select(
-          "id, data_registro, tipo, status, qnt, bairro, city_id, seller_id, created_at"
-        )
-        .single();
+        .select("id");
 
       if (insertError) {
         throw insertError;
       }
 
-      if (data) {
-        setRecords((prev) => [data as CrmRecord, ...prev].slice(0, 50));
-      } else {
-        await loadRecords();
-      }
-
-      setForm(initialForm);
       setShowForm(false);
+      setForm(initialForm);
+      await loadRecords();
     } catch (err) {
-      console.error(err);
+      console.error("[CRM save]", err);
       setError("Nao foi possivel salvar o registro. Verifique os dados.");
+      if (err instanceof Error) {
+        setErrorDetails(err.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -216,7 +220,10 @@ export default function CrmPage() {
 
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
+          <div>{error}</div>
+          {process.env.NODE_ENV !== "production" && errorDetails ? (
+            <div className="mt-1 text-xs text-rose-600">{errorDetails}</div>
+          ) : null}
         </div>
       ) : null}
 
