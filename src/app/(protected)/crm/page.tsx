@@ -43,7 +43,6 @@ const statusOptions = [
 
 const initialForm = {
   data_registro: "",
-  qnt: "1",
   tipo: "VENDA",
   status: "PENDENTE",
   city_id: "",
@@ -108,6 +107,16 @@ const weekdayShort = (value?: string | Date | null) => {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 };
 
+const abbreviateId = (value?: string | null) => {
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= 8) {
+    return value;
+  }
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+};
+
 const formatErrorDetails = (err: unknown) => {
   if (!err) {
     return null;
@@ -148,6 +157,9 @@ export default function CrmPage() {
   const [showForm, setShowForm] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [form, setForm] = useState(initialForm);
+  const [sellerNameById, setSellerNameById] = useState<Map<string, string>>(
+    new Map()
+  );
 
   const cityMap = useMemo(() => {
     return new Map(cities.map((city) => [city.id, city.name]));
@@ -167,7 +179,35 @@ export default function CrmPage() {
       throw recordsError;
     }
 
-    setRecords((data as CrmRecord[]) || []);
+    const rows = (data as CrmRecord[]) || [];
+    setRecords(rows);
+
+    const sellerIds = Array.from(
+      new Set(rows.map((row) => row.seller_id).filter(Boolean))
+    );
+
+    if (sellerIds.length === 0) {
+      setSellerNameById(new Map());
+      return;
+    }
+
+    const { data: profiles, error: profilesError } = await supabase
+      .schema("app")
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", sellerIds);
+
+    if (profilesError) {
+      console.error("[CRM sellers]", profilesError);
+      setSellerNameById(new Map());
+      return;
+    }
+
+    const entries = (profiles || []).map((profile) => [
+      profile.id,
+      profile.full_name,
+    ]);
+    setSellerNameById(new Map(entries));
   };
 
   const loadCities = async () => {
@@ -255,17 +295,11 @@ export default function CrmPage() {
         return;
       }
 
-      const qnt = Number(form.qnt);
-      if (!Number.isFinite(qnt) || qnt <= 0) {
-        setError("Quantidade precisa ser maior que zero.");
-        return;
-      }
-
       setSaving(true);
 
       const payload = {
         data_registro: form.data_registro,
-        qnt,
+        qnt: 1,
         tipo: form.tipo,
         status: form.status,
         city_id: form.city_id,
@@ -311,6 +345,34 @@ export default function CrmPage() {
         </Button>
       </div>
 
+      <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <span>Exibindo: {records.length} registros</span>
+          <span>
+            Total (soma qnt):{" "}
+            {records.reduce((total, item) => total + (item.qnt || 0), 0)}
+          </span>
+          <span>
+            Vendas: {records.filter((item) => item.tipo === "VENDA").length} |
+            Leads: {records.filter((item) => item.tipo === "LEAD").length}
+          </span>
+          <span>
+            Pendentes:{" "}
+            {
+              records.filter((item) =>
+                ["PENDENTE", "AGENDADO", "REAGENDAR"].includes(item.status)
+              ).length
+            }{" "}
+            | Concluidos:{" "}
+            {
+              records.filter((item) =>
+                ["INSTALADO", "CANCELADO", "INVIAVEL"].includes(item.status)
+              ).length
+            }
+          </span>
+        </div>
+      </div>
+
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           <div>{error}</div>
@@ -340,22 +402,6 @@ export default function CrmPage() {
               <span className="mt-1 block text-xs text-slate-500">
                 {weekdayLong(form.data_registro) || "-"}
               </span>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600">
-                Quantidade
-              </label>
-              <Input
-                type="number"
-                min={1}
-                value={form.qnt}
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    qnt: event.target.value,
-                  }))
-                }
-              />
             </div>
             <div>
               <label className="text-xs font-medium text-slate-600">Tipo</label>
@@ -482,7 +528,6 @@ export default function CrmPage() {
                 <th className="px-4 py-3">Contato</th>
                 <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Qtd</th>
                 <th className="px-4 py-3">Bairro</th>
                 <th className="px-4 py-3">Cidade</th>
                 <th className="px-4 py-3">Seller</th>
@@ -491,13 +536,13 @@ export default function CrmPage() {
             <tbody className="divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={8}>
                     Carregando...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={8}>
                     Nenhum registro encontrado.
                   </td>
                 </tr>
@@ -529,13 +574,15 @@ export default function CrmPage() {
                     </td>
                     <td className="px-4 py-3">{record.tipo}</td>
                     <td className="px-4 py-3">{record.status}</td>
-                    <td className="px-4 py-3">{record.qnt}</td>
                     <td className="px-4 py-3">{record.bairro}</td>
                     <td className="px-4 py-3">
                       {cityMap.get(record.city_id) ?? "-"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
-                      {record.seller_id === userId ? "Você" : record.seller_id}
+                      {record.seller_id === userId
+                        ? "Você"
+                        : sellerNameById.get(record.seller_id) ??
+                          abbreviateId(record.seller_id)}
                     </td>
                   </tr>
                 ))
