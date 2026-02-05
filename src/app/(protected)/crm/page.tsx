@@ -205,8 +205,8 @@ export default function CrmPage() {
         status: form.status,
         city_id: form.city_id,
         bairro: form.bairro.trim(),
-        nome_completo: form.nome_completo.trim() || "",
-        contato: form.contato.trim() || "",
+        nome_completo: form.nome_completo.trim() || null,
+        contato: form.contato.trim() || null,
         seller_id: userId,
       };
 
@@ -461,7 +461,7 @@ export default function CrmPage() {
                       {cityMap.get(record.city_id) ?? "-"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
-                      {record.seller_id === userId ? "Voce" : record.seller_id}
+                      {record.seller_id === userId ? "Você" : record.seller_id}
                     </td>
                   </tr>
                 ))
