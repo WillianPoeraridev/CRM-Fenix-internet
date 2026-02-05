@@ -10,6 +10,8 @@ type CrmRecord = {
   data_registro: string;
   tipo: string;
   status: string;
+  inviabilidade: string | null;
+  cancel_subtype: string | null;
   qnt: number;
   bairro: string;
   city_id: string;
@@ -25,26 +27,27 @@ type City = {
 };
 
 const tipoOptions = [
-  "VENDA",
-  "LEAD",
-  "MIGRACAO",
-  "INADIMPLENCIA",
-  "REATIVACAO",
+  { label: "VENDA", value: "VENDA" },
+  { label: "LEAD", value: "LEAD" },
+  { label: "MIGRAÇÃO", value: "MIGRACAO" },
+  { label: "INADIMPLÊNCIA", value: "INADIMPLENCIA" },
+  { label: "REATIVAÇÃO", value: "REATIVACAO" },
 ];
 
-const statusOptions = [
-  "PENDENTE",
-  "AGENDADO",
-  "REAGENDAR",
-  "INSTALADO",
-  "CANCELADO",
-  "INVIAVEL",
+const planilhaStatusOptions = [
+  { label: "SIM", value: "SIM" },
+  { label: "NÃO", value: "NAO" },
+  { label: "REAGENDAR", value: "REAGENDAR" },
+  { label: "INV REGIÃO", value: "INV REGIAO" },
+  { label: "INV PORTA", value: "INV PORTA" },
+  { label: "CANCELADO", value: "CANCELADO" },
+  { label: "CANC TRANBORDO", value: "CANC TRANBORDO" },
 ];
 
 const initialForm = {
   data_registro: "",
   tipo: "VENDA",
-  status: "PENDENTE",
+  status: "SIM",
   city_id: "",
   bairro: "",
   nome_completo: "",
@@ -117,6 +120,56 @@ const abbreviateId = (value?: string | null) => {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 };
 
+const planilhaStatusToDb = (status: string) => {
+  switch (status) {
+    case "SIM":
+      return { status: "INSTALADO", inviabilidade: null, cancel_subtype: null };
+    case "NAO":
+      return { status: "PENDENTE", inviabilidade: null, cancel_subtype: null };
+    case "REAGENDAR":
+      return { status: "REAGENDAR", inviabilidade: null, cancel_subtype: null };
+    case "INV REGIAO":
+      return { status: "INVIAVEL", inviabilidade: "REGIAO", cancel_subtype: null };
+    case "INV PORTA":
+      return { status: "INVIAVEL", inviabilidade: "PORTA", cancel_subtype: null };
+    case "CANCELADO":
+      return { status: "CANCELADO", inviabilidade: null, cancel_subtype: null };
+    case "CANC TRANBORDO":
+      return {
+        status: "CANCELADO",
+        inviabilidade: null,
+        cancel_subtype: "TRANBORDO",
+      };
+    default:
+      return { status: "PENDENTE", inviabilidade: null, cancel_subtype: null };
+  }
+};
+
+const dbToPlanilhaStatus = (record: CrmRecord) => {
+  if (record.status === "INSTALADO") {
+    return "SIM";
+  }
+  if (record.status === "PENDENTE") {
+    return "NAO";
+  }
+  if (record.status === "REAGENDAR") {
+    return "REAGENDAR";
+  }
+  if (record.status === "INVIAVEL") {
+    return record.inviabilidade === "PORTA" ? "INV PORTA" : "INV REGIAO";
+  }
+  if (record.status === "CANCELADO") {
+    return record.cancel_subtype === "TRANBORDO"
+      ? "CANC TRANBORDO"
+      : "CANCELADO";
+  }
+  return record.status;
+};
+
+const tipoLabel = (tipo: string) => {
+  return tipoOptions.find((item) => item.value === tipo)?.label ?? tipo;
+};
+
 const formatErrorDetails = (err: unknown) => {
   if (!err) {
     return null;
@@ -152,14 +205,17 @@ export default function CrmPage() {
   const [cities, setCities] = useState<City[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [form, setForm] = useState(initialForm);
   const [sellerNameById, setSellerNameById] = useState<Map<string, string>>(
     new Map()
   );
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const cityMap = useMemo(() => {
     return new Map(cities.map((city) => [city.id, city.name]));
@@ -170,7 +226,7 @@ export default function CrmPage() {
       .schema("app")
       .from("crm_records")
       .select(
-        "id, data_registro, tipo, status, qnt, bairro, city_id, seller_id, created_at, nome_completo, contato"
+        "id, data_registro, tipo, status, inviabilidade, cancel_subtype, qnt, bairro, city_id, seller_id, created_at, nome_completo, contato"
       )
       .order("created_at", { ascending: false })
       .limit(50);
@@ -241,8 +297,26 @@ export default function CrmPage() {
           throw userError;
         }
 
+        const currentUserId = userData.user?.id ?? null;
         if (isMounted) {
-          setUserId(userData.user?.id ?? null);
+          setUserId(currentUserId);
+        }
+
+        if (currentUserId) {
+          const { data: profile, error: profileError } = await supabase
+            .schema("app")
+            .from("profiles")
+            .select("id, role")
+            .eq("id", currentUserId)
+            .maybeSingle();
+
+          if (profileError) {
+            throw profileError;
+          }
+
+          if (isMounted) {
+            setIsAdmin(profile?.role === "ADMIN");
+          }
         }
 
         await Promise.all([loadCities(), loadRecords()]);
@@ -280,6 +354,113 @@ export default function CrmPage() {
     }));
   }, [showForm, form.data_registro]);
 
+  const canEditRecord = (record: CrmRecord) =>
+    record.seller_id === userId || isAdmin;
+
+  const handleStartCreate = () => {
+    if (showForm && !editingId) {
+      setShowForm(false);
+      setForm(initialForm);
+      return;
+    }
+
+    setEditingId(null);
+    setForm(initialForm);
+    setShowForm(true);
+  };
+
+  const handleEdit = (record: CrmRecord) => {
+    setEditingId(record.id);
+    setForm({
+      data_registro: record.data_registro,
+      tipo: record.tipo,
+      status: dbToPlanilhaStatus(record),
+      city_id: record.city_id,
+      bairro: record.bairro,
+      nome_completo: record.nome_completo || "",
+      contato: record.contato || "",
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (record: CrmRecord) => {
+    if (!canEditRecord(record)) {
+      setError("Sem permissao para excluir este registro.");
+      return;
+    }
+
+    if (!confirm("Deseja excluir este registro?")) {
+      return;
+    }
+
+    try {
+      setUpdatingId(record.id);
+      setError(null);
+      setErrorDetails(null);
+
+      const { error: deleteError } = await supabase
+        .schema("app")
+        .from("crm_records")
+        .delete()
+        .eq("id", record.id);
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      setRecords((prev) => prev.filter((item) => item.id !== record.id));
+    } catch (err) {
+      console.error("[CRM delete]", err);
+      setError("Nao foi possivel excluir o registro.");
+      setErrorDetails(formatErrorDetails(err));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleInlineStatusChange = async (
+    record: CrmRecord,
+    nextPlanilha: string
+  ) => {
+    if (!canEditRecord(record)) {
+      setError("Sem permissao para editar este registro.");
+      return;
+    }
+
+    const { status, inviabilidade, cancel_subtype } =
+      planilhaStatusToDb(nextPlanilha);
+
+    try {
+      setUpdatingId(record.id);
+      setError(null);
+      setErrorDetails(null);
+
+      const { error: updateError } = await supabase
+        .schema("app")
+        .from("crm_records")
+        .update({ status, inviabilidade, cancel_subtype })
+        .eq("id", record.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setRecords((prev) =>
+        prev.map((item) =>
+          item.id === record.id
+            ? { ...item, status, inviabilidade, cancel_subtype }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error("[CRM update]", err);
+      setError("Nao foi possivel atualizar o status.");
+      setErrorDetails(formatErrorDetails(err));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const handleSave = async () => {
     try {
       setError(null);
@@ -297,30 +478,51 @@ export default function CrmPage() {
 
       setSaving(true);
 
+      const statusDb = planilhaStatusToDb(form.status);
+
       const payload = {
         data_registro: form.data_registro,
         qnt: 1,
         tipo: form.tipo,
-        status: form.status,
+        status: statusDb.status,
+        inviabilidade: statusDb.inviabilidade,
+        cancel_subtype: statusDb.cancel_subtype,
         city_id: form.city_id,
         bairro: form.bairro.trim(),
         nome_completo: form.nome_completo.trim() || null,
         contato: form.contato.trim() || null,
-        seller_id: userId,
       };
 
-      const { error: insertError } = await supabase
-        .schema("app")
-        .from("crm_records")
-        .insert(payload)
-        .select("id");
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .schema("app")
+          .from("crm_records")
+          .update(payload)
+          .eq("id", editingId);
 
-      if (insertError) {
-        throw insertError;
+        if (updateError) {
+          throw updateError;
+        }
+      } else {
+        const insertPayload = {
+          ...payload,
+          seller_id: userId,
+        };
+
+        const { error: insertError } = await supabase
+          .schema("app")
+          .from("crm_records")
+          .insert(insertPayload)
+          .select("id");
+
+        if (insertError) {
+          throw insertError;
+        }
       }
 
       setShowForm(false);
       setForm(initialForm);
+      setEditingId(null);
       await loadRecords();
     } catch (err) {
       console.error("[CRM save]", err);
@@ -340,8 +542,8 @@ export default function CrmPage() {
             Ultimos 50 registros ordenados por data de criacao.
           </p>
         </div>
-        <Button onClick={() => setShowForm((prev) => !prev)}>
-          {showForm ? "Fechar" : "Novo registro"}
+        <Button onClick={handleStartCreate}>
+          {showForm && !editingId ? "Fechar" : "Novo registro"}
         </Button>
       </div>
 
@@ -357,18 +559,15 @@ export default function CrmPage() {
             Leads: {records.filter((item) => item.tipo === "LEAD").length}
           </span>
           <span>
-            Pendentes:{" "}
-            {
-              records.filter((item) =>
-                ["PENDENTE", "AGENDADO", "REAGENDAR"].includes(item.status)
-              ).length
-            }{" "}
-            | Concluidos:{" "}
-            {
-              records.filter((item) =>
-                ["INSTALADO", "CANCELADO", "INVIAVEL"].includes(item.status)
-              ).length
-            }
+            Status:{" "}
+            {planilhaStatusOptions
+              .map((status) => {
+                const count = records.filter(
+                  (item) => dbToPlanilhaStatus(item) === status.value
+                ).length;
+                return `${status.label}: ${count}`;
+              })
+              .join(" | ")}
           </span>
         </div>
       </div>
@@ -404,7 +603,9 @@ export default function CrmPage() {
               </span>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Tipo</label>
+              <label className="text-xs font-medium text-slate-600">
+                Definição
+              </label>
               <select
                 className={selectClassName}
                 value={form.tipo}
@@ -416,14 +617,16 @@ export default function CrmPage() {
                 }
               >
                 {tipoOptions.map((tipo) => (
-                  <option key={tipo} value={tipo}>
-                    {tipo}
+                  <option key={tipo.value} value={tipo.value}>
+                    {tipo.label}
                   </option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Status</label>
+              <label className="text-xs font-medium text-slate-600">
+                Status Planilha
+              </label>
               <select
                 className={selectClassName}
                 value={form.status}
@@ -434,9 +637,9 @@ export default function CrmPage() {
                   }))
                 }
               >
-                {statusOptions.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
+                {planilhaStatusOptions.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
                   </option>
                 ))}
               </select>
@@ -505,11 +708,19 @@ export default function CrmPage() {
 
           <div className="mt-6 flex gap-3">
             <Button onClick={handleSave} disabled={saving}>
-              {saving ? "Salvando..." : "Salvar"}
+              {saving
+                ? "Salvando..."
+                : editingId
+                ? "Atualizar"
+                : "Salvar"}
             </Button>
             <Button
               variant="outline"
-              onClick={() => setShowForm(false)}
+              onClick={() => {
+                setShowForm(false);
+                setEditingId(null);
+                setForm(initialForm);
+              }}
               disabled={saving}
             >
               Cancelar
@@ -531,18 +742,19 @@ export default function CrmPage() {
                 <th className="px-4 py-3">Bairro</th>
                 <th className="px-4 py-3">Cidade</th>
                 <th className="px-4 py-3">Seller</th>
+                <th className="px-4 py-3">Acoes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={8}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
                     Carregando...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={8}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
                     Nenhum registro encontrado.
                   </td>
                 </tr>
@@ -572,8 +784,23 @@ export default function CrmPage() {
                         {record.contato || "-"}
                       </span>
                     </td>
-                    <td className="px-4 py-3">{record.tipo}</td>
-                    <td className="px-4 py-3">{record.status}</td>
+                    <td className="px-4 py-3">{tipoLabel(record.tipo)}</td>
+                    <td className="px-4 py-3">
+                      <select
+                        className={selectClassName}
+                        value={dbToPlanilhaStatus(record)}
+                        onChange={(event) =>
+                          handleInlineStatusChange(record, event.target.value)
+                        }
+                        disabled={!canEditRecord(record) || updatingId === record.id}
+                      >
+                        {planilhaStatusOptions.map((status) => (
+                          <option key={status.value} value={status.value}>
+                            {status.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-4 py-3">{record.bairro}</td>
                     <td className="px-4 py-3">
                       {cityMap.get(record.city_id) ?? "-"}
@@ -583,6 +810,26 @@ export default function CrmPage() {
                         ? "Você"
                         : sellerNameById.get(record.seller_id) ??
                           abbreviateId(record.seller_id)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleEdit(record)}
+                          disabled={!canEditRecord(record)}
+                        >
+                          Editar
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDelete(record)}
+                          disabled={!canEditRecord(record) || updatingId === record.id}
+                        >
+                          Excluir
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
