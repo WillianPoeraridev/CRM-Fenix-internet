@@ -15,6 +15,8 @@ type CrmRecord = {
   city_id: string;
   seller_id: string;
   created_at: string;
+  nome_completo: string | null;
+  contato: string | null;
 };
 
 type City = {
@@ -103,7 +105,7 @@ export default function CrmPage() {
       .schema("app")
       .from("crm_records")
       .select(
-        "id, data_registro, tipo, status, qnt, bairro, city_id, seller_id, created_at"
+        "id, data_registro, tipo, status, qnt, bairro, city_id, seller_id, created_at, nome_completo, contato"
       )
       .order("created_at", { ascending: false })
       .limit(50);
@@ -408,6 +410,8 @@ export default function CrmPage() {
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-3">Data</th>
+                <th className="px-4 py-3">Cliente</th>
+                <th className="px-4 py-3">Contato</th>
                 <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Qtd</th>
@@ -419,13 +423,13 @@ export default function CrmPage() {
             <tbody className="divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={7}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
                     Carregando...
                   </td>
                 </tr>
               ) : records.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-4 text-slate-500" colSpan={7}>
+                  <td className="px-4 py-4 text-slate-500" colSpan={9}>
                     Nenhum registro encontrado.
                   </td>
                 </tr>
@@ -433,6 +437,22 @@ export default function CrmPage() {
                 records.map((record) => (
                   <tr key={record.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">{record.data_registro}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="block max-w-[180px] truncate"
+                        title={record.nome_completo || "-"}
+                      >
+                        {record.nome_completo || "-"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="block max-w-[140px] truncate"
+                        title={record.contato || "-"}
+                      >
+                        {record.contato || "-"}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">{record.tipo}</td>
                     <td className="px-4 py-3">{record.status}</td>
                     <td className="px-4 py-3">{record.qnt}</td>
@@ -441,7 +461,7 @@ export default function CrmPage() {
                       {cityMap.get(record.city_id) ?? "-"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
-                      {record.seller_id}
+                      {record.seller_id === userId ? "Voce" : record.seller_id}
                     </td>
                   </tr>
                 ))
