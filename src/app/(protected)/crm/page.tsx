@@ -55,6 +55,59 @@ const initialForm = {
 const selectClassName =
   "flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2";
 
+const toLocalDateISO = (date: Date) => {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const parseDateInput = (value?: string | Date | null) => {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  const parts = value.split("-");
+  if (parts.length === 3) {
+    const [year, month, day] = parts.map(Number);
+    if (!Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)) {
+      return new Date(year, month - 1, day);
+    }
+  }
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
+
+const formatDateBR = (value?: string | Date | null) => {
+  const date = parseDateInput(value);
+  if (!date) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("pt-BR").format(date);
+};
+
+const weekdayLong = (value?: string | Date | null) => {
+  const date = parseDateInput(value);
+  if (!date) {
+    return "";
+  }
+  return new Intl.DateTimeFormat("pt-BR", { weekday: "long" }).format(date);
+};
+
+const weekdayShort = (value?: string | Date | null) => {
+  const date = parseDateInput(value);
+  if (!date) {
+    return "";
+  }
+  const raw = new Intl.DateTimeFormat("pt-BR", { weekday: "short" }).format(
+    date
+  );
+  const cleaned = raw.replace(/\./g, "");
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+};
+
 const formatErrorDetails = (err: unknown) => {
   if (!err) {
     return null;
@@ -175,6 +228,18 @@ export default function CrmPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showForm || form.data_registro) {
+      return;
+    }
+
+    const todayISO = toLocalDateISO(new Date());
+    setForm((prev) => ({
+      ...prev,
+      data_registro: prev.data_registro || todayISO,
+    }));
+  }, [showForm, form.data_registro]);
+
   const handleSave = async () => {
     try {
       setError(null);
@@ -272,6 +337,9 @@ export default function CrmPage() {
                   }))
                 }
               />
+              <span className="mt-1 block text-xs text-slate-500">
+                {weekdayLong(form.data_registro) || "-"}
+              </span>
             </div>
             <div>
               <label className="text-xs font-medium text-slate-600">
@@ -436,7 +504,13 @@ export default function CrmPage() {
               ) : (
                 records.map((record) => (
                   <tr key={record.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">{record.data_registro}</td>
+                    <td className="px-4 py-3">
+                      {formatDateBR(record.data_registro) === "-"
+                        ? "-"
+                        : `${formatDateBR(record.data_registro)} (${weekdayShort(
+                            record.data_registro
+                          )})`}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className="block max-w-[180px] truncate"
