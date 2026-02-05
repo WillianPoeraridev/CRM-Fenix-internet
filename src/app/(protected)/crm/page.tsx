@@ -53,6 +53,36 @@ const initialForm = {
 const selectClassName =
   "flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2";
 
+const formatErrorDetails = (err: unknown) => {
+  if (!err) {
+    return null;
+  }
+
+  if (typeof err === "object") {
+    const maybe = err as { status?: number; message?: string };
+    const statusText =
+      typeof maybe.status === "number" ? `status ${maybe.status}` : null;
+    const messageText =
+      typeof maybe.message === "string" ? maybe.message : null;
+
+    if (statusText && messageText) {
+      return `${statusText} - ${messageText}`;
+    }
+    if (statusText) {
+      return statusText;
+    }
+    if (messageText) {
+      return messageText;
+    }
+  }
+
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  return null;
+};
+
 export default function CrmPage() {
   const [records, setRecords] = useState<CrmRecord[]>([]);
   const [cities, setCities] = useState<City[]>([]);
@@ -127,9 +157,7 @@ export default function CrmPage() {
           setError(
             "Nao foi possivel carregar os registros agora. Tente novamente."
           );
-          if (err instanceof Error) {
-            setErrorDetails(err.message);
-          }
+          setErrorDetails(formatErrorDetails(err));
         }
       } finally {
         if (isMounted) {
@@ -196,9 +224,7 @@ export default function CrmPage() {
     } catch (err) {
       console.error("[CRM save]", err);
       setError("Nao foi possivel salvar o registro. Verifique os dados.");
-      if (err instanceof Error) {
-        setErrorDetails(err.message);
-      }
+      setErrorDetails(formatErrorDetails(err));
     } finally {
       setSaving(false);
     }
